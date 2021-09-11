@@ -1,9 +1,9 @@
-@servers(['prd' => '-A 172.26.0.3'])
+@servers(['prd' => '-A 192.168.1.1'])
 
 @setup
-    $repository = 'ssh://git@165.76.148.171:8890/web/ux/web.git';
-    $releases_dir = '/var/www/html/ux-cimx/web/releases';
-    $app_dir = '/var/www/html/ux-cimx/web';
+    $repository = 'ssh://git@255.255.255.255:65535/sample_project.git';
+    $releases_dir = '/var/www/html/sample_project/releases';
+    $app_dir = '/var/www/html/sample_project';
     $release = 'web_'.date('YmdHis');
     $new_release_dir = $releases_dir .'/'. $release;
 @endsetup
