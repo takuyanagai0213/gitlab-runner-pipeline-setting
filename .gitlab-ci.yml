@@ -1,4 +1,4 @@
-image: php:7.3-fpm
+image: php:7.4-fpm
 
 cache:
   key: one-key-to-rule-them-all
@@ -8,7 +8,7 @@ cache:
 
 before_script:
   - apt-get update
-  - apt-get install -y git libzip-dev
+  - apt-get install -y git libzip-dev libpng-dev
   - docker-php-ext-install zip
   - curl --silent --show-error https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
   - mkdir ~/.ssh
@@ -19,28 +19,43 @@ before_script:
   - eval "$(ssh-agent)"
   - ssh-add ~/.ssh/id_rsa
   - ssh-add -l
+  - echo "$SSH_CONFIG" >> ~/.ssh/config
+  - git remote set-url --push origin ssh://git@255.255.255.255:65535/web/sample_project.git
+  - git remote -v
+  - git remote update
+  - git config --global user.name gitlab_runner
+  - git config --global user.email gitlab.runner@example.com
+  - if [[ `git branch | grep $CI_COMMIT_REF_NAME` ]]; then 
+  -   git branch -D $CI_COMMIT_REF_NAME
+  - fi
+  - if [[ ! `git branch | grep $CI_COMMIT_REF_NAME` ]]; then 
+  -   git branch $CI_COMMIT_REF_NAME origin/$CI_COMMIT_REF_NAME
+  - fi
   - git branch
-  - git config --global user.name nagaitakuya
-  - git config --global user.email nagai.takuya@cimx-initiative.com
-
 
 stages:
   - build
   - formatter
-  - deploy
 
 formatter:
   stage: formatter
   script:
-    - apt-get install -y nodejs npm
-    - npm install -g prettier
     - git checkout $CI_COMMIT_REF_NAME
+    - apt-get install -y lsof nodejs npm
+    - npm install
+    - pecl install mongodb
+    - docker-php-ext-enable mongodb
+    - git checkout $CI_COMMIT_REF_NAME
+    - ssh -t -t web_app_db -f -N
+    - lsof -i
     - composer install
-    # - cp .env.example .env
-    # - php artisan key:generate
-    # - vendor/bin/phpunit
+    - cp .env.example .env
+    - echo "$ENV_FILE" >> .env
+    - php artisan key:generate
+    - vendor/bin/phpunit tests/Feature/api_test.php
+    - vendor/bin/phpunit tests/Feature/Api
     - SYNTAX_CHECK=0
-    - for FILE in `git diff --name-only feature/cimx-seat $CI_COMMIT_REF_NAME | grep .php` ; do 
+    - for FILE in `git diff --name-only origin/master | grep -E '*php'` ; do
     - echo $FILE
     - ./vendor/bin/php-cs-fixer fix $FILE
     - echo 'PHPMDで未使用変数などのチェック'
@@ -49,9 +64,33 @@ formatter:
     - fi
     - done
     - IS_ERROR=0
-    - for FILE in `git diff --name-only feature/cimx-seat $CI_COMMIT_REF_NAME | grep .js` ; do
-    - err=$(./node_modules/.bin/eslint --fix $FILE)
-    - if [ "$err" != '' ]; then
+    - for FILE in `git diff --name-only origin/master | grep -E '*js'` ; do
+    - if [ $FILE = '.eslintrc.json' ]; then
+    -   echo $FILE
+    -   echo "skip check"
+    -   continue
+    - fi
+    - if [ $FILE = 'composer.json' ]; then
+    -   echo $FILE
+    -   echo "skip check"
+    -   continue
+    - fi
+    - if [ $FILE = 'package-lock.json' ]; then
+    -   echo $FILE
+    -   echo "skip check"
+    -   continue
+    - fi
+    - if [ $FILE = 'package.json' ]; then
+    -   echo $FILE
+    -   echo "skip check"
+    -   continue
+    - fi
+    - if [ $FILE = WebGL_Release.framework.js ]; then
+    -   echo $FILE
+    -   echo "skip check"
+    -   continue
+    - fi
+    - if [[ -n `./node_modules/.bin/eslint --fix $FILE` ]]; then
     -   ./node_modules/.bin/eslint --fix $FILE
     -   IS_ERROR=1
     - fi
@@ -63,39 +102,21 @@ formatter:
     - git push origin $CI_COMMIT_REF_NAME
     - fi
     - IS_ERROR_LOG_REMAIN_ERROR=0
-    - IS_LOG_REMAIN_ERROR=0
-    - for FILE in `git diff --name-only $CI_MERGE_REQUEST_TARGET_BRANCH_NAME $CI_COMMIT_REF_NAME | grep .php`; do
-    -   error_log_check=$(git grep error_log -- $FILE)
-    -   if [[ -n ${error_log_check} ]]; then
-    -     echo -e "\e[31;43m デバッグコードが残っている可能性があります。'\n'削除してください \e[m"
-    -     IS_ERROR_LOG_REMAIN_ERROR=1
-    -   else
-    -     IS_ERROR_LOG_REMAIN_ERROR=0
-    -   fi
-    -   log_fac_check=$(git grep Log -- $FILE)
-    -   if [[ -n ${log_fac_check} ]]; then
-    -     echo -e "\e[31;43m デバッグコードが残っている可能性があります。'\n'削除してください \e[m"
-    -     IS_LOG_REMAIN_ERROR=1
-    -   else
-    -     IS_LOG_REMAIN_ERROR=0
-    -   fi
+    - for FILE in `git diff --name-only origin/master | grep -E '*php'`; do
+    - echo $FILE
+    - if [[ -n `git grep error_log -- $FILE` ]]; then
+    -   echo -e "\e[31;43m デバッグコードが残っている可能性があります。'\n'削除してください \e[m"
+    -   IS_ERROR_LOG_REMAIN_ERROR=1
+    - else
+    -   IS_ERROR_LOG_REMAIN_ERROR=0
+    - fi
+
     - done
-    - if [ $SYNTAX_CHECK -eq 0 -a $IS_ERROR -eq 0 -a $IS_ERROR_LOG_REMAIN_ERROR -eq 0 -a $IS_LOG_REMAIN_ERROR -eq 0 ]; then
+    - if [ $SYNTAX_CHECK -eq 0 -a $IS_ERROR_LOG_REMAIN_ERROR -eq 0 ]; then
     - exit 0
     - else
     - echo -e "\e[31;43m 修正を行った上で再度コミットしてください \e[m"
     - exit 1
     - fi
   except:
-    - feature/cimx-seat
-    
-deploy_production:
-  stage: deploy
-  script:
-    - git pull origin feature/cimx-seat
-    - composer global require laravel/envoy
-    - ~/.composer/vendor/bin/envoy run deploy
-  only:
-    - feature/cimx-seat
-
-    
+    - master
