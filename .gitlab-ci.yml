@@ -1,4 +1,4 @@
-image: php:7.4-fpm
+image: original/image:latest
 
 cache:
   key: one-key-to-rule-them-all
@@ -7,45 +7,27 @@ cache:
     - node_modules/
 
 before_script:
-  - apt-get update
-  - apt-get install -y git libzip-dev libpng-dev
-  - docker-php-ext-install zip
-  - curl --silent --show-error https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
-  - mkdir ~/.ssh
   - chmod 700 ~/.ssh
-  - echo "$KNOWN_HOSTS" >> ~/.ssh/known_hosts
   - echo "$SSH_KEY" >> ~/.ssh/id_rsa
   - chmod 600 ~/.ssh/id_rsa
   - eval "$(ssh-agent)"
   - ssh-add ~/.ssh/id_rsa
   - ssh-add -l
   - echo "$SSH_CONFIG" >> ~/.ssh/config
-  - git remote set-url --push origin ssh://git@255.255.255.255:65535/web/sample_project.git
+  - ssh://git@255.255.255.255:65535/web/sample_project.git
   - git remote -v
   - git remote update
   - git config --global user.name gitlab_runner
-  - git config --global user.email gitlab.runner@example.com
-  - if [[ `git branch | grep $CI_COMMIT_REF_NAME` ]]; then 
-  -   git branch -D $CI_COMMIT_REF_NAME
-  - fi
-  - if [[ ! `git branch | grep $CI_COMMIT_REF_NAME` ]]; then 
-  -   git branch $CI_COMMIT_REF_NAME origin/$CI_COMMIT_REF_NAME
-  - fi
-  - git branch
-
+  - git config --global user.email gitlab.runner@cimx-initiative.com
 stages:
   - build
   - formatter
+  - deploy
 
 formatter:
   stage: formatter
   script:
-    - git checkout $CI_COMMIT_REF_NAME
-    - apt-get install -y lsof nodejs npm
     - npm install
-    - pecl install mongodb
-    - docker-php-ext-enable mongodb
-    - git checkout $CI_COMMIT_REF_NAME
     - ssh -t -t web_app_db -f -N
     - lsof -i
     - composer install
@@ -110,7 +92,6 @@ formatter:
     - else
     -   IS_ERROR_LOG_REMAIN_ERROR=0
     - fi
-
     - done
     - if [ $SYNTAX_CHECK -eq 0 -a $IS_ERROR_LOG_REMAIN_ERROR -eq 0 ]; then
     - exit 0
@@ -120,3 +101,22 @@ formatter:
     - fi
   except:
     - master
+
+deploy_production:
+  stage: deploy
+  script:
+    - echo "$SSH_CONFIG_ENVOY" >> ~/.ssh/config
+    - git pull origin master
+    - composer global require laravel/envoy
+    - ~/.composer/vendor/bin/envoy run deploy_production --server=prd --branch=master
+  only:
+    - master
+deploy_staging:
+  stage: deploy
+  script:
+    - echo "$SSH_CONFIG_ENVOY" >> ~/.ssh/config
+    - git pull origin master
+    - composer global require laravel/envoy
+    - ~/.composer/vendor/bin/envoy run deploy_staging --server=stg --branch=develop
+  only:
+    - develop
